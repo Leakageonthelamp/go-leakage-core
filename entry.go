@@ -1,5 +1,5 @@
 package core
 
-func TestOutput() {
+func main() {
 	println("test output")
 }
