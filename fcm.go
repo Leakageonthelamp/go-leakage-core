@@ -2,79 +2,161 @@ package core
 
 import (
 	"context"
+	"net/http"
+	"time"
 
 	firebase "firebase.google.com/go"
 	"firebase.google.com/go/messaging"
 	"google.golang.org/api/option"
 )
 
+var FCMServiceConnectError = Error{
+	Status:  http.StatusBadGateway,
+	Code:    "FCM_CONNECT_ERROR",
+	Message: "failure to connect to fcm service",
+}
+
+var FCMServiceSendError = Error{
+	Status:  http.StatusBadGateway,
+	Code:    "FCM_SEND_ERROR",
+	Message: "failure to send notification",
+}
+
+type IFMCMessage struct {
+	Title    string `json:"title"`
+	Body     string `json:"body"`
+	ImageURL string `json:"image_url"`
+
+	Data map[string]string `json:"data"`
+}
+
+type IFMCPayload struct {
+	Token   string       `json:"token"`
+	Message *IFMCMessage `json:"payload"`
+}
+
 type IFMC interface {
-	Send(data map[string]string, token string) error
-	SendAll(data map[string]string, tokens []string) error
-	SendTopic(data map[string]string, topic string) error
+	SendSimpleMessage(tokens []string, payload *IFMCMessage) IError
+	SendSimpleMessages(payload []IFMCPayload) IError
+	SendTopic(topic string, payload map[string]string) IError
 }
 
 type fmcService struct {
 	ctx    IContext
-	Client *messaging.Client
+	client *messaging.Client
 }
 
-func NewFMCService(ctx IContext, bgCtx context.Context, credentialJSON []byte) (IFMC, error) {
-	opt := option.WithCredentialsJSON(credentialJSON)
-	app, err := firebase.NewApp(bgCtx, nil, opt)
-	if err != nil {
-		return nil, err
-	}
-
-	client, err := app.Messaging(bgCtx)
-	if err != nil {
-		return nil, err
-	}
-
+func NewFMC(ctx IContext) IFMC {
 	return &fmcService{
-		ctx:    ctx,
-		Client: client,
-	}, nil
+		ctx: ctx,
+	}
 }
 
-func (s *fmcService) Send(data map[string]string, token string) error {
-	message := &messaging.Message{
-		Data:  data,
-		Token: token,
+func (s *fmcService) connect() IError {
+	if s.client != nil {
+		return nil
 	}
 
-	_, err := s.Client.Send(context.Background(), message)
+	credential := s.ctx.ENV().Config().FirebaseCredential
+
+	opt := option.WithCredentialsJSON([]byte(credential))
+	ctx, cancel := s.getContext()
+	defer cancel()
+
+	app, err := firebase.NewApp(ctx, nil, opt)
 	if err != nil {
-		return err
+		return s.ctx.NewError(err, FCMServiceConnectError)
 	}
 
+	client, err := app.Messaging(ctx)
+	if err != nil {
+		return s.ctx.NewError(err, FCMServiceConnectError)
+	}
+
+	s.client = client
 	return nil
 }
 
-func (s *fmcService) SendAll(data map[string]string, tokens []string) error {
-	message := &messaging.MulticastMessage{
-		Data:   data,
+func (s *fmcService) SendSimpleMessage(tokens []string, message *IFMCMessage) IError {
+	ierr := s.connect()
+	if ierr != nil {
+		return s.ctx.NewError(ierr, ierr)
+	}
+
+	_message := &messaging.MulticastMessage{
+		Notification: &messaging.Notification{
+			Title:    message.Title,
+			Body:     message.Body,
+			ImageURL: message.ImageURL,
+		},
+		Data:   message.Data,
 		Tokens: tokens,
 	}
 
-	_, err := s.Client.SendMulticast(context.Background(), message)
+	ctx, cancel := s.getContext()
+	defer cancel()
+
+	_, err := s.client.SendMulticast(ctx, _message)
 	if err != nil {
-		return err
+		return s.ctx.NewError(err, FCMServiceSendError)
 	}
 
 	return nil
 }
 
-func (s *fmcService) SendTopic(data map[string]string, topic string) error {
-	message := &messaging.Message{
-		Data:  data,
-		Topic: topic,
+func (s *fmcService) SendSimpleMessages(payload []IFMCPayload) IError {
+	ierr := s.connect()
+	if ierr != nil {
+		return s.ctx.NewError(ierr, ierr)
 	}
 
-	_, err := s.Client.Send(context.Background(), message)
+	messages := make([]*messaging.Message, 0)
+	for _, p := range payload {
+		messages = append(messages, &messaging.Message{
+			Notification: &messaging.Notification{
+				Title:    p.Message.Title,
+				Body:     p.Message.Body,
+				ImageURL: p.Message.ImageURL,
+			},
+			Data:  p.Message.Data,
+			Token: p.Token,
+		})
+
+	}
+
+	ctx, cancel := s.getContext()
+	defer cancel()
+
+	_, err := s.client.SendAll(ctx, messages)
 	if err != nil {
-		return err
+		return s.ctx.NewError(err, FCMServiceSendError)
 	}
 
 	return nil
+}
+
+func (s *fmcService) SendTopic(topic string, payload map[string]string) IError {
+	ierr := s.connect()
+	if ierr != nil {
+		return s.ctx.NewError(ierr, ierr)
+	}
+
+	message := &messaging.Message{
+		Data:  payload,
+		Topic: topic,
+	}
+
+	ctx, cancel := s.getContext()
+	defer cancel()
+
+	_, err := s.client.Send(ctx, message)
+	if err != nil {
+		return s.ctx.NewError(err, FCMServiceSendError)
+	}
+
+	return nil
+}
+
+func (s *fmcService) getContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 10*time.Second)
 }

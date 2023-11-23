@@ -76,6 +76,8 @@ type ENVConfig struct {
 	EmailUsername string `mapstructure:"email_username"`
 	EmailPassword string `mapstructure:"email_password"`
 	EmailSender   string `mapstructure:"email_sender"`
+
+	FirebaseCredential string `mapstructure:"firebase_credential"`
 }
 
 type ENVType struct {
@@ -110,7 +112,7 @@ func NewENVPath(path string) IENV {
 		"CACHE_PORT", "CACHE_HOST",
 		"ABCI_ENDPOINT", "DID_METHOD_DEFAULT", "DID_KEY_TYPE_DEFAULT", "S3_ENDPOINT",
 		"S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET", "S3_HTTPS", "S3_REGION",
-		"EMAIL_SERVER", "EMAIL_PORT", "EMAIL_USERNAME", "EMAIL_PASSWORD", "EMAIL_SENDER",
+		"EMAIL_SERVER", "EMAIL_PORT", "EMAIL_USERNAME", "EMAIL_PASSWORD", "EMAIL_SENDER", "FIREBASE_CREDENTIAL",
 	}
 
 	for _, key := range envKeys {
